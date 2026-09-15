@@ -1,0 +1,8 @@
+# نرم‌افزار دفتر خروج کالا — وابستگی‌ها
+# نصب: pip install -r requirements.txt
+
+PyQt6>=6.6
+jdatetime>=5.0
+openpyxl>=3.1
+Pillow>=10.0
+comtypes>=1.4 ; sys_platform == "win32"

@@ -1,0 +1,287 @@
+/* ═══ استایل مدرن - سامانه ثبت دفتر ═══ */
+
+QMainWindow, QDialog {
+    background-color: #F0F2F8;
+}
+
+QWidget {
+    font-family: 'Segoe UI', Tahoma;
+    font-size: 13px;
+    color: #2D3142;
+}
+
+/* ─── نوار کناری با گرادیان ─── */
+QFrame#sidebar {
+    background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #4F46E5, stop:1 #7C3AED);
+    border-radius: 0px;
+}
+
+QFrame#sidebar QLabel#appTitle {
+    color: white;
+    font-size: 18px;
+    font-weight: bold;
+    padding: 4px;
+}
+
+QFrame#sidebar QLabel#appSubtitle {
+    color: rgba(255, 255, 255, 180);
+    font-size: 11px;
+    padding: 0px 4px;
+}
+
+QFrame#sidebar QFrame#goldLine {
+    background-color: rgba(255, 255, 255, 90);
+    max-height: 1px;
+    border: none;
+}
+
+QFrame#sidebar QPushButton {
+    color: rgba(255, 255, 255, 220);
+    text-align: right;
+    padding: 11px 16px;
+    font-size: 14px;
+    font-weight: bold;
+    border: none;
+    border-radius: 10px;
+    background-color: transparent;
+}
+
+QFrame#sidebar QPushButton:hover {
+    background-color: rgba(255, 255, 255, 40);
+    color: white;
+}
+
+QFrame#sidebar QPushButton#active {
+    background-color: white;
+    color: #4F46E5;
+}
+
+QFrame#sidebar QPushButton#btnExit {
+    color: rgba(255, 200, 200, 230);
+}
+
+QFrame#sidebar QPushButton#btnExit:hover {
+    background-color: rgba(220, 60, 60, 100);
+    color: white;
+}
+
+/* ─── هدر صفحه ─── */
+QFrame#pageHeader {
+    background-color: white;
+    border: none;
+    border-radius: 14px;
+}
+
+QFrame#pageHeader QLabel#pageTitle {
+    font-size: 20px;
+    font-weight: bold;
+    color: #1E1B4B;
+}
+
+QFrame#pageHeader QLabel#pageDate {
+    color: #8B8FA3;
+    font-size: 12px;
+    background-color: #EEF0F8;
+    padding: 6px 14px;
+    border-radius: 12px;
+}
+
+/* ─── کارت‌های آماری ─── */
+QFrame#statCard {
+    border: none;
+    border-radius: 16px;
+}
+
+QFrame#statCard QLabel.cardValue {
+    font-size: 30px;
+    font-weight: bold;
+    color: white;
+}
+
+QFrame#statCard QLabel.cardTitle {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 210);
+}
+
+/* ─── گروه‌ها ─── */
+QGroupBox {
+    font-size: 13px;
+    font-weight: bold;
+    color: #1E1B4B;
+    border: 1px solid #E4E7F2;
+    border-radius: 14px;
+    background-color: white;
+    margin-top: 10px;
+    padding-top: 16px;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    right: 14px;
+    padding: 0 8px;
+    background-color: white;
+}
+
+/* ─── جدول‌ها ─── */
+QTableWidget {
+    border: 1px solid #E4E7F2;
+    border-radius: 10px;
+    font-size: 13px;
+    background-color: white;
+    alternate-background-color: #F7F8FC;
+    gridline-color: #EEF0F8;
+    selection-background-color: #E0E7FF;
+    selection-color: #1E1B4B;
+}
+
+QTableWidget::item {
+    padding: 6px;
+}
+
+QHeaderView::section {
+    background-color: #F0F2F8;
+    color: #4F46E5;
+    font-weight: bold;
+    padding: 8px;
+    border: none;
+    border-bottom: 2px solid #4F46E5;
+}
+
+/* ─── فیلدهای ورودی ─── */
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit {
+    padding: 7px 12px;
+    border: 2px solid #E4E7F2;
+    border-radius: 10px;
+    background-color: white;
+    font-size: 13px;
+}
+
+QLineEdit:focus, QComboBox:focus, QTextEdit:focus {
+    border: 2px solid #4F46E5;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 24px;
+}
+
+QListWidget {
+    border: 1px solid #E4E7F2;
+    border-radius: 10px;
+    background-color: white;
+    font-size: 13px;
+    padding: 4px;
+}
+
+/* ─── دکمه‌ها ─── */
+QPushButton {
+    font-size: 13px;
+    font-weight: bold;
+    border-radius: 10px;
+}
+
+QPushButton#btnPrimary {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #4F46E5, stop:1 #7C3AED);
+    color: white;
+    padding: 9px 22px;
+    border: none;
+}
+
+QPushButton#btnPrimary:hover {
+    background-color: #4338CA;
+}
+
+QPushButton#btnSuccess {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #10B981, stop:1 #059669);
+    color: white;
+    padding: 9px 22px;
+    border: none;
+}
+
+QPushButton#btnSuccess:hover {
+    background-color: #059669;
+}
+
+QPushButton#btnWarning {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #F59E0B, stop:1 #D97706);
+    color: white;
+    padding: 9px 22px;
+    border: none;
+}
+
+QPushButton#btnWarning:hover {
+    background-color: #D97706;
+}
+
+QPushButton#btnNeutral {
+    background-color: #6B7280;
+    color: white;
+    padding: 9px 22px;
+    border: none;
+}
+
+QPushButton#btnNeutral:hover {
+    background-color: #4B5563;
+}
+
+QPushButton#btnDefault {
+    background-color: white;
+    color: #4F46E5;
+    padding: 9px 22px;
+    border: 2px solid #E0E7FF;
+}
+
+QPushButton#btnDefault:hover {
+    border-color: #4F46E5;
+    background-color: #EEF2FF;
+}
+
+QPushButton#btnDanger {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #EF4444, stop:1 #DC2626);
+    color: white;
+    padding: 9px 22px;
+    border: none;
+}
+
+QPushButton#btnDanger:hover {
+    background-color: #DC2626;
+}
+
+/* ─── نوار وضعیت ─── */
+QStatusBar {
+    background-color: white;
+    color: #6B7280;
+    font-size: 12px;
+    border-top: 1px solid #E4E7F2;
+}
+
+/* ─── تب‌ها ─── */
+QTabWidget::pane {
+    border: 1px solid #E4E7F2;
+    border-radius: 10px;
+    background-color: white;
+}
+
+QTabBar::tab {
+    background-color: transparent;
+    color: #6B7280;
+    padding: 10px 24px;
+    border-radius: 10px;
+    margin: 4px;
+}
+
+QTabBar::tab:selected {
+    background-color: #4F46E5;
+    color: white;
+    font-weight: bold;
+}
+
+QTabBar::tab:hover:!selected {
+    background-color: #EEF2FF;
+    color: #4F46E5;
+}

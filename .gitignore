@@ -1,0 +1,52 @@
+# ═══════════ داده‌های اجرایی برنامه (هرگز کامیت نشوند) ═══════════
+data/
+backups/
+*.db
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ═══════════ آرتیفکت‌های بیلد PyInstaller ═══════════
+build/
+dist/
+*.spec.bak
+# فایل spec اصلی پروژه کامیته می‌شود؛ فقط نسخه‌های پشتیبانش نادیده گرفته می‌شوند
+
+# ═══════════ پایتون ═══════════
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+
+# ابزارهای پکیجینگ/تست
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ═══════════ فایل‌های موقت تست این پروژه ═══════════
+_test_*.py
+
+# ═══════════ IDE ═══════════
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ═══════════ سیستم‌عامل ═══════════
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# ابزارهای داخلی Codebuff (پیش‌نمایش و run doc)
+.freebuff/
