@@ -17,8 +17,11 @@ else:
 if getattr(sys, 'frozen', False):
     # در حالت EXE، فایل‌های باندل‌شده در پوشه‌ی _internal هستند
     ASSETS_DIR = Path(getattr(sys, '_MEIPASS', BASE_DIR)) / "assets"
+    # آیکون برنامه داخل باندل است (از spec به ریشه‌ی باندل اضافه می‌شود)
+    ICON_PATH = Path(getattr(sys, '_MEIPASS', BASE_DIR)) / "logo.ico"
 else:
     ASSETS_DIR = BASE_DIR / "assets"
+    ICON_PATH = BASE_DIR / "logo.ico"
 
 DB_PATH = BASE_DIR / "data" / "sabtedaftar.db"
 SCANS_DIR = BASE_DIR / "data" / "scans"
@@ -33,7 +36,7 @@ QUOTA_WARNING_THRESHOLD = 0.9  # ۹۰٪ مصرف → هشدار زرد
 
 # ─── نام نرم‌افزار ───
 APP_NAME = "نرم‌افزار دفتر خروج کالا"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.3.0"
 
 
 def ensure_directories():

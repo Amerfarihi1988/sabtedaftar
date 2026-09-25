@@ -6,6 +6,7 @@ import traceback
 from PyQt6.QtPrintSupport import QPrinter
 from PyQt6.QtGui import QTextDocument, QFont, QPageSize
 from PyQt6.QtWidgets import QMessageBox
+from services.org_settings import get_org_title
 
 
 def print_exit_permit(data, show_dialog=True):
@@ -77,6 +78,12 @@ def _generate_html(data):
             f"</tr>"
         )
 
+    org_title = get_org_title() or ""
+    org_line = (
+        f'<p dir="rtl" style="font-size: 11pt; color: #555; margin-bottom: 2px;">{_esc(org_title)}</p>'
+        if org_title else ""
+    )
+
     return f"""
 <html dir="rtl" lang="fa">
 <head>
@@ -133,6 +140,7 @@ def _generate_html(data):
 </head>
 <body dir="rtl">
     <div class="header" dir="rtl">
+        {org_line}
         <p dir="rtl">شماره ثبت: <b>{_esc(data['permit_number'])}</b></p>
         <p dir="rtl">تاریخ: <b>{_esc(data['exit_date'])}</b></p>
         <hr>

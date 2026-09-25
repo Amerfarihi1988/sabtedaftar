@@ -123,7 +123,7 @@ class CompanyWindow(QWidget):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(15)
 
         # ─── جستجو ───
@@ -147,6 +147,7 @@ class CompanyWindow(QWidget):
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
+        self.table.doubleClicked.connect(self._edit_company)  # دابل‌کلیک = ویرایش
         layout.addWidget(self.table)
 
         # ─── دکمه‌ها ───

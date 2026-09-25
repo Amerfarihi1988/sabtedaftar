@@ -12,8 +12,13 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from database.db_manager import db
 from services.quota import is_low_quota
-from services.report_pdf import generate_period_report_pdf, generate_certificate_report_pdf
+from services.report_pdf import (
+    generate_period_report_pdf, generate_certificate_report_pdf,
+    generate_company_statement_pdf, generate_daily_manifest_pdf,
+)
 from ui.shamsi_calendar import ShamsiDateEdit, is_valid_shamsi_date
+from ui.ui_helpers import show_toast
+import os
 
 class ReportsWindow(QWidget):
     """صفحه گزارش‌ها"""
@@ -30,7 +35,7 @@ class ReportsWindow(QWidget):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(16, 12, 16, 12)
 
         tabs = QTabWidget()
         tabs.addTab(self._create_period_tab(), "گزارش دوره‌ای PDF")
@@ -78,8 +83,14 @@ class ReportsWindow(QWidget):
         btn_pdf.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_pdf.clicked.connect(self._export_period_pdf)
 
+        btn_manifest = QPushButton("📦 مانیفست روزانه PDF")
+        btn_manifest.setObjectName("btnWarning")
+        btn_manifest.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_manifest.clicked.connect(self._export_daily_manifest)
+
         btn_row.addWidget(btn_preview)
         btn_row.addWidget(btn_pdf)
+        btn_row.addWidget(btn_manifest)
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
@@ -257,9 +268,87 @@ class ReportsWindow(QWidget):
             self._period_records
         )
         if ok:
-            QMessageBox.information(self, "موفق", f"گزارش PDF ذخیره شد:\n{filepath}")
+            show_toast(self, f"گزارش PDF ذخیره شد: {os.path.basename(filepath)}", "success", 3200)
         else:
             QMessageBox.critical(self, "خطا", "تولید PDF ناموفق بود")
+
+    def _export_daily_manifest(self):
+        """مانیفست روزانه: خروج‌های یک تاریخ مشخص در یک سند رسمی"""
+        exit_date = self.p_date_to.text().strip() or self.p_date_from.text().strip()
+        if not exit_date:
+            QMessageBox.warning(
+                self, "خطا",
+                "تاریخ مانیفست را در فیلد «تا تاریخ» (یا «از تاریخ») وارد کنید"
+            )
+            return
+        if not is_valid_shamsi_date(exit_date):
+            QMessageBox.warning(
+                self, "خطا",
+                f"تاریخ نامعتبر است: {exit_date}\nمثال صحیح: 1405/06/16"
+            )
+            return
+
+        try:
+            permits = db.fetch_all(
+                """SELECT ep.id, ep.permit_number, ep.destination,
+                          c.name as company_name
+                   FROM exit_permits ep
+                   JOIN companies c ON ep.company_id = c.id
+                   WHERE ep.exit_date = ?
+                   ORDER BY ep.created_at""",
+                (exit_date,)
+            )
+            if not permits:
+                QMessageBox.information(
+                    self, "داده‌ای نیست",
+                    f"در تاریخ «{exit_date}» خروجی ثبت نشده است."
+                )
+                return
+
+            records = []
+            total_items = 0
+            total_amount = 0.0
+            for p in permits:
+                items = db.fetch_all(
+                    """SELECT ei.product_name, ei.amount, u.name as unit_name
+                       FROM exit_items ei
+                       JOIN units u ON ei.unit_id = u.id
+                       WHERE ei.exit_permit_id = ? ORDER BY ei.id""",
+                    (p["id"],)
+                )
+                total_items += len(items)
+                total_amount += sum(it["amount"] for it in items)
+                items_text = " | ".join(
+                    f"{it['product_name']} — {it['amount']:g} {it['unit_name']}"
+                    for it in items
+                )
+                records.append({
+                    "permit_number": p["permit_number"],
+                    "company_name": p["company_name"],
+                    "destination": p["destination"] or "",
+                    "items_text": items_text,
+                })
+
+            filepath, _ = QFileDialog.getSaveFileName(
+                self, "ذخیره مانیفست روزانه",
+                f"مانیفست_{exit_date.replace('/', '-')}.pdf",
+                "PDF (*.pdf)"
+            )
+            if not filepath:
+                return
+
+            ok = generate_daily_manifest_pdf(
+                filepath, exit_date, records,
+                {"permits": len(permits), "items": total_items,
+                 "total_amount": total_amount}
+            )
+            if ok:
+                show_toast(self, f"مانیفست ذخیره شد: {os.path.basename(filepath)}", "success", 3200)
+            else:
+                QMessageBox.critical(self, "خطا", "تولید PDF ناموفق بود")
+        except Exception as e:
+            traceback.print_exc()
+            QMessageBox.critical(self, "خطا", f"خطا در مانیفست: {e}")
 
     # ═══════════ تب ۲: ریز مصرف گواهی ═══════════
 
@@ -297,6 +386,11 @@ class ReportsWindow(QWidget):
 
         btn_row = QHBoxLayout()
 
+        btn_statement = QPushButton("📑 صورتحساب شرکت (PDF)")
+        btn_statement.setObjectName("btnWarning")
+        btn_statement.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_statement.clicked.connect(self._export_company_statement)
+
         btn_show = QPushButton("📋 نمایش ریز مصرف")
         btn_show.setObjectName("btnPrimary")
         btn_show.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -309,6 +403,7 @@ class ReportsWindow(QWidget):
 
         btn_row.addWidget(btn_show)
         btn_row.addWidget(btn_pdf)
+        btn_row.addWidget(btn_statement)
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
@@ -455,9 +550,96 @@ class ReportsWindow(QWidget):
             self._current_unit_name
         )
         if ok:
-            QMessageBox.information(self, "موفق", f"ریز مصرف PDF ذخیره شد:\n{filepath}")
+            show_toast(self, f"ریز مصرف PDF ذخیره شد: {os.path.basename(filepath)}", "success", 3200)
         else:
             QMessageBox.critical(self, "خطا", "تولید PDF ناموفق بود")
+
+    def _export_company_statement(self):
+        """صورتحساب کامل شرکت انتخابی: گواهی‌ها + مجوزها + بدهی‌ها"""
+        company_id = self.c_company_combo.currentData()
+        if company_id is None:
+            QMessageBox.warning(self, "خطا", "ابتدا شرکت را انتخاب کنید")
+            return
+        company_name = self.c_company_combo.currentText()
+
+        try:
+            certs = db.fetch_all(
+                """SELECT cert.*, u.name as unit_name
+                   FROM certificates cert
+                   JOIN units u ON cert.unit_id = u.id
+                   WHERE cert.company_id = ?
+                   ORDER BY cert.created_at DESC""",
+                (company_id,)
+            )
+            permits = db.fetch_all(
+                """SELECT ep.id, ep.permit_number, ep.exit_date,
+                          ep.destination, ep.customs_representative
+                   FROM exit_permits ep
+                   WHERE ep.company_id = ?
+                   ORDER BY ep.exit_date, ep.id""",
+                (company_id,)
+            )
+
+            records = []
+            for p in permits:
+                items = db.fetch_all(
+                    """SELECT ei.product_name, ei.amount, u.name as unit_name, ei.is_debt, ei.debt_settled
+                       FROM exit_items ei
+                       JOIN units u ON ei.unit_id = u.id
+                       WHERE ei.exit_permit_id = ?""",
+                    (p["id"],)
+                )
+                items_parts, debt_parts = [], []
+                for it in items:
+                    amt = int(it["amount"]) if it["amount"] == int(it["amount"]) else it["amount"]
+                    items_parts.append(f"{it['product_name']} — {amt} {it['unit_name']}")
+                    if it["is_debt"] and not it["debt_settled"]:
+                        debt_parts.append(f"{it['product_name']}: {amt} {it['unit_name']}")
+                records.append({
+                    "permit_number": p["permit_number"],
+                    "exit_date": p["exit_date"],
+                    "destination": p["destination"] or "",
+                    "items_text": " | ".join(items_parts),
+                    "debt_text": " | ".join(debt_parts),
+                })
+
+            debts = db.fetch_all(
+                """SELECT ep.permit_number, ep.exit_date, ei.product_name,
+                          ei.amount, u.name as unit_name, ei.debt_settled
+                   FROM exit_items ei
+                   JOIN exit_permits ep ON ei.exit_permit_id = ep.id
+                   JOIN units u ON ei.unit_id = u.id
+                   WHERE ep.company_id = ? AND ei.is_debt = 1
+                   ORDER BY ep.exit_date, ep.id""",
+                (company_id,)
+            )
+
+            if not certs and not permits:
+                QMessageBox.information(
+                    self, "داده‌ای نیست",
+                    "این شرکت گواهی یا مجوزی ثبت نکرده است."
+                )
+                return
+
+            filepath, _ = QFileDialog.getSaveFileName(
+                self, "ذخیره صورتحساب",
+                f"صورتحساب_{company_name.replace(' ', '_')}.pdf",
+                "PDF (*.pdf)"
+            )
+            if not filepath:
+                return
+
+            ok = generate_company_statement_pdf(
+                filepath, company_name, records,
+                [dict(c) for c in certs], [dict(d) for d in debts]
+            )
+            if ok:
+                show_toast(self, f"صورتحساب ذخیره شد: {os.path.basename(filepath)}", "success", 3200)
+            else:
+                QMessageBox.critical(self, "خطا", "تولید PDF ناموفق بود")
+        except Exception as e:
+            traceback.print_exc()
+            QMessageBox.critical(self, "خطا", f"خطا در صورتحساب: {e}")
 
     def refresh_page(self):
         """رفرش هنگام ورود به صفحه"""

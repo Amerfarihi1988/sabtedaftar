@@ -6,9 +6,10 @@ from PyQt6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QComboBox, QTableWidget, QTableWidgetItem, QHeaderView,
     QMessageBox, QFormLayout, QGroupBox, QDoubleSpinBox, QTextEdit,
-    QListWidget,QCompleter
+    QListWidget,QCompleter, QScrollArea, QFrame
 )
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QShortcut, QKeySequence
 from database.db_manager import db
 from services.numbering import generate_permit_number_in_tx, get_next_number_preview
 from services.scanner import scan_document, has_scanner
@@ -17,7 +18,10 @@ from services.quota import (
     get_certificate_info, process_items, preview_deduction,
     apply_quota_plan, restore_permit_quota_tx,
 )
+from services.quota import get_active_certificate
 from services.printer import print_exit_permit, print_to_pdf
+from ui.persian_amount import PersianAmountSpinBox
+from ui.ui_helpers import show_toast
 from config import SCANS_DIR
 import jdatetime
 import os
@@ -37,9 +41,30 @@ class ExitPermitWindow(QWidget):
         self._setup_ui()
         self._prefill()
 
+        # میان‌بر Ctrl+S = ذخیره
+        QShortcut(QKeySequence.StandardKey.Save, self).activated.connect(self._save_and_print)
+
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # ─── ناحیه اسکرول: با پنجره کوتاه، فرم اسکرول می‌شود نه آنکه دکمه‌ها بیرون بزنند ───
+        # توجه: استایل با سلکتور کامل — استایل بدون سلکتور به فرزندان منتقل می‌شود و
+        # گرادیان دکمه‌ها و سفیدی گروه‌ها را خنثی می‌کند (متن سفید روی زمینه روشن)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        # سلکتور نوع: فقط خودِ اسکرول‌اریا؛ به فرزندان نشت نمی‌کند
+        # (استایل viewport بدون سلکتور بود که گرادیان دکمه‌ها را می‌کشت)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        content = QWidget()
+        content.setObjectName("scrollContent")  # شفافیت با سلکتور ID در styles.css
+        scroll.setWidget(content)
+        outer.addWidget(scroll, stretch=1)
+
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(16, 10, 16, 6)
         layout.setSpacing(10)
 
         # ─── نوار حالت ویرایش ───
@@ -104,6 +129,10 @@ class ExitPermitWindow(QWidget):
         self.items_table.setColumnWidth(3, 55)
         self.items_table.setMinimumHeight(180)
         self.items_table.verticalHeader().setVisible(False)
+        # ارتفاع ردیف‌ها متناسب با فیلدهای فرم (۴۰px) — با استایل سراسری (پدینگ+بوردر)
+        # اگر ردیف ۱۷px بماند، فضای متن منفی می‌شود و تایپ کاربر دیده نمی‌شود
+        self.items_table.verticalHeader().setDefaultSectionSize(40)
+        self.items_table.setVerticalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
         items_layout.addWidget(self.items_table)
 
         add_item_btn = QPushButton("➕ افزودن کالا")
@@ -112,7 +141,8 @@ class ExitPermitWindow(QWidget):
         add_item_btn.clicked.connect(self._add_item_row)
         items_layout.addWidget(add_item_btn)
 
-        layout.addWidget(items_group)
+        # کشش گروه کالاها در فضای اضافی — بقیه بخش‌ها سایز طبیعی می‌مانند
+        layout.addWidget(items_group, 1)
 
         # ─── بخش اسکن ───
         scan_group = QGroupBox("اسکن نامه")
@@ -145,8 +175,11 @@ class ExitPermitWindow(QWidget):
         self.notes_input.setMaximumHeight(60)
         layout.addWidget(self.notes_input)
 
-        # ─── دکمه‌های پایین ───
-        btn_layout = QHBoxLayout()
+        # ─── دکمه‌های پایین — نوار ثابت خارج از اسکرول: همیشه دیده می‌شوند ───
+        footer = QFrame()
+        footer.setObjectName("formFooter")
+        btn_layout = QHBoxLayout(footer)
+        btn_layout.setContentsMargins(16, 6, 16, 10)
         btn_layout.addStretch()
 
         btn_cancel = QPushButton("انصراف")
@@ -161,7 +194,7 @@ class ExitPermitWindow(QWidget):
 
         btn_layout.addWidget(btn_cancel)
         btn_layout.addWidget(self.btn_save_print)
-        layout.addLayout(btn_layout)
+        outer.addWidget(footer)
 
     def _prefill(self):
         self.permit_number_input.setText(get_next_number_preview())
@@ -213,10 +246,17 @@ class ExitPermitWindow(QWidget):
             )
             self.cert_info_label.show()
         elif not info["has_active"]:
-            self.cert_info_label.setText(
-                f"⚠️ شرکت «{info.get('company_name', '')}» گواهی‌دار است "
-                f"ولی گواهی فعالی ندارد. خروج به‌عنوان بدهی ثبت می‌شود."
-            )
+            if info.get("all_expired"):
+                self.cert_info_label.setText(
+                    f"⛔ شرکت «{info.get('company_name', '')}» گواهی‌دار است ولی "
+                    f"گواهی فعالش منقض شده (انقضا: {info.get('expiry_date')}).\n"
+                    f"گواهی جدید ثبت کنید یا خروج به‌عنوان بدهی ثبت می‌شود."
+                )
+            else:
+                self.cert_info_label.setText(
+                    f"⚠️ شرکت «{info.get('company_name', '')}» گواهی‌دار است "
+                    f"ولی گواهی فعالی ندارد. خروج به‌عنوان بدهی ثبت می‌شود."
+                )
             self.cert_info_label.setStyleSheet(
                 "padding: 8px; border-radius: 10px; font-size: 13px; "
                 "background-color: #FEF3C7; color: #92400E;"
@@ -227,11 +267,19 @@ class ExitPermitWindow(QWidget):
             total = info["total_amount"]
             pct = (remaining / total * 100) if total > 0 else 0
 
+            expiry_part = ""
+            if info.get("expiry_date") and info.get("days_to_expiry") is not None:
+                d = info["days_to_expiry"]
+                if d < 0:
+                    expiry_part = f" — ⛔ منقض‌شده ({abs(d)} روز پیش)"
+                else:
+                    expiry_part = f" — انقضا: {info['expiry_date']} ({d} روز مانده)"
+
             if info["is_warning"]:
                 self.cert_info_label.setText(
                     f"🟡 گواهی: {info['product_type']} — "
                     f"باقیمانده: {remaining} {info['unit_name']} "
-                    f"از {total} ({pct:.1f}%) — رو به اتمام!"
+                    f"از {total} ({pct:.1f}%) — رو به اتمام!{expiry_part}"
                 )
                 self.cert_info_label.setStyleSheet(
                     "padding: 8px; border-radius: 10px; font-size: 13px; "
@@ -240,7 +288,7 @@ class ExitPermitWindow(QWidget):
             else:
                 self.cert_info_label.setText(
                     f"✅ گواهی: {info['product_type']} — "
-                    f"باقیمانده: {remaining} {info['unit_name']} از {total}"
+                    f"باقیمانده: {remaining} {info['unit_name']} از {total}{expiry_part}"
                 )
                 self.cert_info_label.setStyleSheet(
                     "padding: 8px; border-radius: 10px; font-size: 13px; "
@@ -254,15 +302,25 @@ class ExitPermitWindow(QWidget):
 
         name_input = QLineEdit()
         name_input.setPlaceholderText("نام کالا")
+        # اتوکامپلیت از تاریخچه‌ی کالاهای ثبت‌شده — صرفه‌جویی در تایپ روزانه
+        completer = QCompleter(self._get_product_names(), self)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        name_input.setCompleter(completer)
         self.items_table.setCellWidget(row, 0, name_input)
 
-        amount_input = QDoubleSpinBox()
+        # حداقل ارتفاع فیلدها تا داخل سلول ۴۰ پیکسلی کامل دیده و تایپ شوند
+        name_input.setMinimumHeight(36)
+
+        amount_input = PersianAmountSpinBox()
         amount_input.setRange(0, 9999999999)
         amount_input.setDecimals(2)
+        amount_input.setMinimumHeight(36)
+        amount_input.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
         self.items_table.setCellWidget(row, 1, amount_input)
 
         unit_combo = QComboBox()
-        unit_combo.setMinimumHeight(32)
+        unit_combo.setMinimumHeight(36)
         units = db.fetch_all("SELECT id, name FROM units ORDER BY name")
         for u in units:
             unit_combo.addItem(u["name"], u["id"])
@@ -274,6 +332,16 @@ class ExitPermitWindow(QWidget):
         # خودِ دکمه پاس داده می‌شود؛ ردیف لحظه‌ی کلیک پیدا می‌شود (بدون ایندکس stale)
         del_btn.clicked.connect(lambda checked=False, b=del_btn: self._remove_item_row(b))
         self.items_table.setCellWidget(row, 3, del_btn)
+
+    def _get_product_names(self):
+        """لیست نام‌های یکتای کالاهای ثبت‌شده‌ی قبلی برای اتوکامپلیت"""
+        try:
+            rows = db.fetch_all(
+                "SELECT DISTINCT product_name FROM exit_items ORDER BY product_name"
+            )
+            return [r["product_name"] for r in rows if r["product_name"]]
+        except Exception:
+            return []
 
     def _remove_item_row(self, del_btn):
         """حذف ردیف بر اساس موقعیت لحظه‌ای دکمه — نه ایندکس هنگام ساخت"""
@@ -289,6 +357,62 @@ class ExitPermitWindow(QWidget):
             self.items_table.removeRow(row)
         else:
             QMessageBox.information(self, "توجه", "حداقل یک ردیف کالا باید وجود داشته باشد")
+
+    def load_for_duplicate(self, permit_id):
+        """
+        «ثبت مشابه»: بارگذاری اطلاعات یک مجوز قبلی به‌عنوان الگوی ثبت جدید.
+        شماره ثبت و تاریخ بازنشانی می‌شوند و اسکن‌ها کپی نمی‌شوند —
+        ذخیره‌ی نهایی یک مجوز کاملاً جدید می‌سازد.
+        """
+        rec = db.fetch_one("SELECT * FROM exit_permits WHERE id=?", (permit_id,))
+        if not rec:
+            QMessageBox.warning(self, "خطا", "مجوز یافت نشد")
+            return
+
+        # حالت ثبت جدید (نه ویرایش)
+        self.edit_mode = False
+        self.editing_permit_id = None
+        self.original_scan_count = 0
+        self.edit_header.hide()
+        self.btn_save_print.setText("💾 ذخیره و چاپ")
+
+        self.permit_number_input.setText(get_next_number_preview())
+        self.date_input.setText(jdatetime.date.today().strftime("%Y/%m/%d"))
+
+        self.company_combo.blockSignals(True)
+        idx = self.company_combo.findData(rec["company_id"])
+        if idx >= 0:
+            self.company_combo.setCurrentIndex(idx)
+        self.company_combo.blockSignals(False)
+        self._on_company_changed()
+
+        self.destination_input.setText(rec["destination"] or "")
+        self.customs_rep_input.setText(rec["customs_representative"] or "")
+        self.notes_input.setPlainText(rec["notes"] or "")
+
+        # کالاهای مجوز قبلی به‌عنوان الگو
+        while self.items_table.rowCount() > 0:
+            self.items_table.removeRow(0)
+        items = db.fetch_all(
+            """SELECT product_name, amount, unit_id FROM exit_items
+               WHERE exit_permit_id=?""",
+            (permit_id,)
+        )
+        for it in items:
+            row = self.items_table.rowCount()
+            self._add_item_row()
+            name_w = self.items_table.cellWidget(row, 0)
+            amount_w = self.items_table.cellWidget(row, 1)
+            unit_w = self.items_table.cellWidget(row, 2)
+            name_w.setText(it["product_name"])
+            amount_w.setValue(it["amount"])
+            u_idx = unit_w.findData(it["unit_id"])
+            if u_idx >= 0:
+                unit_w.setCurrentIndex(u_idx)
+
+        # اسکن‌ها متعلق به مجوز قبلی‌اند — کپی نمی‌شوند
+        self.scanned_files = []
+        self.scan_list.clear()
 
     def load_for_edit(self, permit_id):
         """بارگذاری مجوز برای ویرایش"""
@@ -375,7 +499,7 @@ class ExitPermitWindow(QWidget):
         if result:
             self.scanned_files.append(result)
             self.scan_list.addItem(f"📄 صفحه {page}: {filename}")
-            QMessageBox.information(self, "موفق", "اسکن با موفقیت انجام شد ✓")
+            show_toast(self, "اسکن انجام شد ✓", "success")
         else:
             QMessageBox.warning(self, "خطا", "اسکن ناموفق بود یا لغو شد")
 
@@ -494,6 +618,22 @@ class ExitPermitWindow(QWidget):
                 if reply == QMessageBox.StandardButton.No:
                     return
 
+            # ─── گارد گواهی منقض (دفاع عمیق): اگر تنها گواهی فعال منقض باشد ───
+            cert = get_active_certificate(company_id)
+            if cert is None:
+                company = db.fetch_one(
+                    "SELECT has_certificate FROM companies WHERE id=?", (company_id,)
+                )
+                if company and company["has_certificate"]:
+                    reply = QMessageBox.question(
+                        self, "گواهی منقض",
+                        "گواهی فعال این شرکت منقض شده است.\n"
+                        "ادامه = ثبت به‌عنوان بدهی. ادامه می‌دهید؟",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                    )
+                    if reply == QMessageBox.StandardButton.No:
+                        return
+
             # ─── برنامه‌ریزی کسر سهمیه (بدون اثر جانبی) ───
             processed, warnings = process_items(company_id, quota_items)
 
@@ -539,19 +679,24 @@ class ExitPermitWindow(QWidget):
                              item["unit_id"], proc["certificate_id"], 1 if proc["is_debt"] else 0)
                         )
                     # ۵. ثبت اسکن‌های جدید (فقط موارد افزوده‌شده)
+                    # page_number از شماره‌های موجودِ موجود ادامه می‌یابد،
+                    # نه از موقعیت در لیست حافظه — تا اگر ترتیب/حذف تغییر کند،
+                    # شماره‌های صفحه‌های قبلی ثابت بمانند
+                    max_existing_page = tx.fetch_one(
+                        "SELECT COALESCE(MAX(page_number), 0) as mx FROM scanned_documents WHERE exit_permit_id=?",
+                        (permit_id,)
+                    )["mx"]
                     for i, filepath in enumerate(self.scanned_files, 1):
                         if i > self.original_scan_count:
+                            max_existing_page += 1
                             tx.insert(
                                 "INSERT INTO scanned_documents (exit_permit_id, file_path, page_number) VALUES (?, ?, ?)",
-                                (permit_id, filepath, i)
+                                (permit_id, filepath, max_existing_page)
                             )
                     # ۶. کسر سهمیه‌ی گواهی‌ها
                     apply_quota_plan(tx, processed)
 
-                QMessageBox.information(
-                    self, "ویرایش موفق",
-                    f"✅ مجوز «{permit_number}» به‌روزرسانی شد."
-                )
+                show_toast(self, f"مجوز «{permit_number}» به‌روزرسانی شد ✓", "success", 3000)
                 self._reset_form()
                 self.back_requested.emit()
                 return
@@ -596,9 +741,11 @@ class ExitPermitWindow(QWidget):
                 "items": items,
             }
 
+            show_toast(self, f"مجوز «{permit_number}» ثبت شد ✓", "success", 3000)
+
             reply = QMessageBox.question(
-                self, "ثبت موفق",
-                f"✅ مجوز خروج با شماره «{permit_number}» ثبت شد.\n\n"
+                self, "چاپ روبرگه",
+                f"مجوز خروج با شماره «{permit_number}» ثبت شد.\n\n"
                 "می‌خواهید روبرگه را چاپ کنید؟",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
@@ -613,7 +760,7 @@ class ExitPermitWindow(QWidget):
                         )
                         if pdf_path:
                             if print_to_pdf(print_data, pdf_path):
-                                QMessageBox.information(self, "PDF", "روبرگه به‌صورت PDF ذخیره شد ✓")
+                                show_toast(self, "روبرگه PDF شد ✓", "success")
                 except Exception as e:
                     QMessageBox.warning(
                         self, "خطای چاپ",

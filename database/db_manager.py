@@ -1,9 +1,15 @@
 """
 مدیریت اتصال و عملیات پایگاه داده
+
+چرخه‌ی راه‌اندازی:
+    1. ساخت جداول با CREATE TABLE IF NOT EXISTS (دیتابیس تازه = کامل‌ترین ساختار)
+    2. اجرای مهاجرت‌ها روی دیتابیس‌های موجودِ قدیمی‌تر (نسخه‌دار با user_version؛
+       هر مهاجرت idempotent و اتمیک است و پیش از اجرا پشتیبان خودکار گرفته می‌شود)
 """
 import sqlite3
 from contextlib import contextmanager
 from config import DB_PATH, ensure_directories
+from database.migrations import run_migrations, is_fresh_database, mark_schema_version, LATEST_VERSION
 
 
 class DatabaseManager:
@@ -14,7 +20,7 @@ class DatabaseManager:
 
     def get_connection(self):
         """ایجاد اتصال به دیتابیس"""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=15)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON;")
         return conn
@@ -38,7 +44,10 @@ class DatabaseManager:
             conn.close()
 
     def _create_tables(self):
-        """ساخت تمام جداول در صورت عدم وجود"""
+        """ساخت تمام جداول در صورت عدم وجود + مهاجرت نسخه‌دار"""
+        fresh = is_fresh_database(self.db_path)
+
+        # ۱) ساخت جداول (برای دیتابیس تازه یا تکمیل جداول ناقص)
         with self.transaction() as tx:
             cursor = tx.conn.cursor()
 
@@ -75,6 +84,7 @@ class DatabaseManager:
                     remaining_amount REAL NOT NULL,
                     unit_id INTEGER NOT NULL,
                     issue_date TEXT,
+                    expiry_date TEXT,
                     status TEXT DEFAULT 'active',
                     created_at TEXT DEFAULT (datetime('now', 'localtime')),
                     FOREIGN KEY (company_id) REFERENCES companies(id),
@@ -146,6 +156,27 @@ class DatabaseManager:
                     status TEXT DEFAULT 'success'
                 )
             """)
+
+        # ۲) مهاجرت نسخه‌دار — فقط برای دیتابیس‌های موجود (نه تازه‌ساخت)
+        if not fresh:
+            run_migrations(self.db_path)
+        else:
+            # دیتابیس تازه با کامل‌ترین ساختار همین نسخه ساخته شد؛
+            # نسخه‌ی ساختار را مستقیم ثبت می‌کنیم تا مهاجرتِ هدررفت زمان/پشتیبان نداشته باشد.
+            mark_schema_version(self.db_path, LATEST_VERSION)
+            try:
+                print(f"✓ دیتابیس تازه ساخته شد (نسخه ساختار {LATEST_VERSION})")
+            except UnicodeEncodeError:
+                print(f"[DB] fresh database created (schema v{LATEST_VERSION})")
+
+        # ۳) حالت WAL برای همروندی بهتر (پایه‌ی چند-کاربره) — خارج از تراکنش،
+        # idempotent و پایدار روی فایل. اگر فایل‌سیستم پشتیبانی نکند، بی‌صدا رد می‌شود.
+        try:
+            c = sqlite3.connect(self.db_path, timeout=15)
+            c.execute("PRAGMA journal_mode=WAL")
+            c.close()
+        except sqlite3.Error:
+            pass
 
     # ─── عملیات عمومی CRUD ───
 

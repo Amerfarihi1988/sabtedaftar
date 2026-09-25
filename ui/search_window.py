@@ -13,14 +13,17 @@ from PyQt6.QtCore import Qt, QDate, pyqtSignal
 from PyQt6.QtGui import QColor, QPixmap
 from database.db_manager import db
 from services.quota import restore_permit_quota_tx
+from services.printer import print_exit_permit, print_to_pdf
 from config import SCANS_DIR
 from ui.shamsi_calendar import ShamsiDateEdit, is_valid_shamsi_date
+from ui.ui_helpers import set_table_empty_state, set_cell_pill
 
 class SearchWindow(QWidget):
     """صفحه جستجو و گزارش"""
 
     back_requested = pyqtSignal()
     edit_permit_requested = pyqtSignal(int)
+    duplicate_permit_requested = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -33,7 +36,7 @@ class SearchWindow(QWidget):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(10)
 
         filter_group = QGroupBox("فیلترهای جستجو")
@@ -44,6 +47,10 @@ class SearchWindow(QWidget):
         self.company_combo.addItem("همه شرکت‌ها", None)
         self._load_companies()
         filter_layout.addRow("شرکت:", self.company_combo)
+
+        self.permit_number_input = QLineEdit()
+        self.permit_number_input.setPlaceholderText("مثال: 1405/012 یا 012")
+        filter_layout.addRow("شماره ثبت:", self.permit_number_input)
 
         self.product_input = QLineEdit()
         self.product_input.setPlaceholderText("نام کالا...")
@@ -107,6 +114,16 @@ class SearchWindow(QWidget):
         btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_delete.clicked.connect(self._delete_permit)
 
+        btn_reprint = QPushButton("🖨️ چاپ روبرگه")
+        btn_reprint.setObjectName("btnSuccess")
+        btn_reprint.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_reprint.clicked.connect(self._reprint_permit)
+
+        btn_duplicate = QPushButton("📋 ثبت مشابه")
+        btn_duplicate.setObjectName("btnPrimary")
+        btn_duplicate.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_duplicate.clicked.connect(self._duplicate_permit)
+
         btn_back = QPushButton("بازگشت به داشبورد")
         btn_back.setObjectName("btnDefault")
         btn_back.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -118,6 +135,8 @@ class SearchWindow(QWidget):
         btn_layout.addWidget(btn_view_scan)
         btn_layout.addWidget(btn_edit)
         btn_layout.addWidget(btn_delete)
+        btn_layout.addWidget(btn_reprint)
+        btn_layout.addWidget(btn_duplicate)
         btn_layout.addStretch()
         btn_layout.addWidget(btn_back)
         layout.addLayout(btn_layout)
@@ -146,6 +165,7 @@ class SearchWindow(QWidget):
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
+        self.table.doubleClicked.connect(self._edit_permit)  # دابل‌کلیک = ویرایش
         results_layout.addWidget(self.table)
 
         layout.addWidget(results_group)
@@ -182,28 +202,45 @@ class SearchWindow(QWidget):
                 self.company_combo.setCurrentIndex(idx)
         self.company_combo.blockSignals(False)
 
-    def _get_items_text(self, permit_id):
-        items = db.fetch_all(
-            """SELECT ei.product_name, ei.amount, u.name as unit_name, ei.is_debt
+    def _get_items_map(self, permit_ids):
+        """
+        کوئری دسته‌ای کالاهای همه‌ی مجوزها (رفع N+1).
+        خروجی: {permit_id: [(items_text, debt_text), ...]} — یک جفت برای هر مجوز
+        """
+        result = {}
+        if not permit_ids:
+            return result
+        placeholders = ",".join("?" for _ in permit_ids)
+        rows = db.fetch_all(
+            f"""SELECT ei.exit_permit_id, ei.product_name, ei.amount,
+                      u.name as unit_name, ei.is_debt, ei.debt_settled
                FROM exit_items ei
                JOIN units u ON ei.unit_id = u.id
-               WHERE ei.exit_permit_id = ?""",
-            (permit_id,)
+               WHERE ei.exit_permit_id IN ({placeholders})
+               ORDER BY ei.exit_permit_id, ei.id""",
+            tuple(permit_ids)
         )
-        parts = []
-        debt_parts = []
-        for it in items:
-            amount_str = self._format_number(it["amount"])
-            text = f"{it['product_name']} — {amount_str} {it['unit_name']}"
-            parts.append(text)
-            if it["is_debt"]:
-                debt_parts.append(f"{it['product_name']}: {amount_str} {it['unit_name']}")
+        for r in rows:
+            amount_str = self._format_number(r["amount"])
+            text = f"{r['product_name']} — {amount_str} {r['unit_name']}"
+            debt_text = None
+            if r["is_debt"] and not r["debt_settled"]:
+                debt_text = f"{r['product_name']}: {amount_str} {r['unit_name']}"
+            result.setdefault(r["exit_permit_id"], []).append((text, debt_text))
+        return result
+
+    def _get_items_text(self, permit_id):
+        """نسخه تک‌مجوزی (برای سازگاری) — از مپ دسته‌ای استفاده می‌کند"""
+        mapping = self._get_items_map([permit_id])
+        pairs = mapping.get(permit_id, [])
+        parts = [p[0] for p in pairs]
+        debt_parts = [p[1] for p in pairs if p[1]]
         return " | ".join(parts), " | ".join(debt_parts)
 
     def _format_number(self, num):
-        if num == int(num):
-            return f"{int(num):,}"
-        return f"{num:,.2f}"
+        """جداکننده هزارگان با ارقام فارسی: ۳٬۵۰۰٬۰۰۰"""
+        from ui.ui_helpers import format_thousands
+        return format_thousands(num)
 
     def _build_query(self):
         conditions = []
@@ -213,6 +250,12 @@ class SearchWindow(QWidget):
         if company_id is not None:
             conditions.append("ep.company_id = ?")
             params.append(company_id)
+
+        permit_no = self.permit_number_input.text().strip()
+        if permit_no:
+            # جستجوی انعطاف‌پذیر: «1405/012» یا فقط «012»
+            conditions.append("ep.permit_number LIKE ?")
+            params.append(f"%{permit_no}%")
 
         product = self.product_input.text().strip()
         if product:
@@ -240,7 +283,11 @@ class SearchWindow(QWidget):
                 params.append(date_to)
 
         if self.chk_debt_only.isChecked():
-            conditions.append("ep.id IN (SELECT exit_permit_id FROM exit_items WHERE is_debt = 1)")
+            # فقط بدهی‌های تسویه‌نشده — هم‌خوان با آمار داشبورد
+            conditions.append(
+                "ep.id IN (SELECT exit_permit_id FROM exit_items "
+                "WHERE is_debt = 1 AND debt_settled = 0)"
+            )
 
         where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
         return where_clause, params
@@ -277,6 +324,9 @@ class SearchWindow(QWidget):
 
             records = db.fetch_all(query, tuple(params))
 
+            # کوئری دسته‌ای کالاها (رفع N+1)
+            items_map = self._get_items_map([r["id"] for r in records])
+
             self.table.setRowCount(0)
             debt_count = 0
             for rec in records:
@@ -288,19 +338,27 @@ class SearchWindow(QWidget):
                 self.table.setItem(row, 3, QTableWidgetItem(rec["destination"] or ""))
                 self.table.setItem(row, 4, QTableWidgetItem(rec["customs_representative"] or ""))
 
-                items_text, debt_text = self._get_items_text(rec["id"])
+                pairs = items_map.get(rec["id"], [])
+                items_text = " | ".join(p[0] for p in pairs)
+                debt_text = " | ".join(p[1] for p in pairs if p[1])
                 self.table.setItem(row, 5, QTableWidgetItem(items_text))
 
+                # نشان رنگی وضعیت بدهی — یک نگاه کافی
                 if debt_text:
-                    debt_item = QTableWidgetItem(f"🔴 {debt_text}")
-                    debt_item.setForeground(QColor("#E11D48"))
+                    set_cell_pill(self.table, row, 6, f"بدهی: {debt_text}", "red")
                     debt_count += 1
                 else:
-                    debt_item = QTableWidgetItem("—")
-                self.table.setItem(row, 6, debt_item)
+                    set_cell_pill(self.table, row, 6, "تسویه", "green")
                 self.table.setItem(row, 7, QTableWidgetItem(str(rec["id"])))
 
             self.table.resizeRowsToContents()
+
+            # حالت خالی: پیام دوستانه وقتی نتیجه‌ای نیست
+            set_table_empty_state(
+                self.table, not records,
+                title="موردی یافت نشد",
+                subtitle="فیلترها را تغییر دهید یا دکمه «پاک‌کردن فیلترها» را بزنید"
+            )
 
             count = len(records)
             self.lbl_count.setText(f"{self._to_persian(count)} نتیجه")
@@ -313,6 +371,7 @@ class SearchWindow(QWidget):
 
     def _reset_filters(self):
         self.company_combo.setCurrentIndex(0)
+        self.permit_number_input.clear()
         self.product_input.clear()
         self.destination_input.clear()
         self.customs_input.clear()
@@ -371,10 +430,8 @@ class SearchWindow(QWidget):
                 except Exception:
                     pass
 
-            QMessageBox.information(
-                self, "حذف موفق",
-                f"مجوز «{permit_number}» حذف شد و سهمیه‌ها بازگردانی شدند."
-            )
+            from ui.ui_helpers import show_toast
+            show_toast(self, f"مجوز «{permit_number}» حذف شد — سهمیه‌ها بازگشت ✓", "success", 3000)
             self._load_results()
 
         except Exception as e:
@@ -457,7 +514,9 @@ class SearchWindow(QWidget):
             ws.sheet_view.rightToLeft = True
 
             wb.save(filepath)
-            QMessageBox.information(self, "موفق", f"گزارش با موفقیت ذخیره شد:\n{filepath}")
+            from ui.ui_helpers import show_toast
+            import os as _os
+            show_toast(self, f"اکسل ذخیره شد: {_os.path.basename(filepath)}", "success", 3200)
 
         except ImportError:
             QMessageBox.warning(
@@ -467,6 +526,70 @@ class SearchWindow(QWidget):
         except Exception as e:
             traceback.print_exc()
             QMessageBox.critical(self, "خطا", f"خطا در تولید Excel: {e}")
+
+    def _reprint_permit(self):
+        """چاپ مجدد روبرگه «خروج بلامانع» مجوز انتخابی"""
+        row = self.table.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "خطا", "برای چاپ، یک مجوز را انتخاب کنید")
+            return
+
+        permit_id = int(self.table.item(row, 7).text())
+        try:
+            permit = db.fetch_one("SELECT * FROM exit_permits WHERE id=?", (permit_id,))
+            if not permit:
+                QMessageBox.warning(self, "خطا", "مجوز یافت نشد")
+                return
+            company = db.fetch_one(
+                "SELECT name FROM companies WHERE id=?", (permit["company_id"],)
+            )
+            items = db.fetch_all(
+                """SELECT ei.product_name, ei.amount, u.name as unit_name
+                   FROM exit_items ei
+                   JOIN units u ON ei.unit_id = u.id
+                   WHERE ei.exit_permit_id=? ORDER BY ei.id""",
+                (permit_id,)
+            )
+            if not items:
+                QMessageBox.warning(self, "خطا", "این مجوز کالایی ندارد")
+                return
+
+            print_data = {
+                "permit_number": permit["permit_number"],
+                "exit_date": permit["exit_date"],
+                "customs_representative": permit["customs_representative"] or "—",
+                "company_name": company["name"] if company else "—",
+                "destination": permit["destination"] or "",
+                "items": [
+                    {"product_name": it["product_name"],
+                     "amount": it["amount"],
+                     "unit_name": it["unit_name"]}
+                    for it in items
+                ],
+            }
+            printed = print_exit_permit(print_data, show_dialog=True)
+            if not printed:
+                # چاپ مستقیم انجام نشد → پیشنهاد PDF
+                pdf_path, _ = QFileDialog.getSaveFileName(
+                    self, "ذخیره روبرگه PDF",
+                    f"{permit['permit_number'].replace('/', '-')}.pdf",
+                    "PDF (*.pdf)"
+                )
+                if pdf_path and print_to_pdf(print_data, pdf_path):
+                    QMessageBox.information(self, "PDF", "روبرگه به‌صورت PDF ذخیره شد ✓")
+        except Exception as e:
+            traceback.print_exc()
+            QMessageBox.critical(self, "خطا", f"خطا در چاپ: {e}")
+
+    def _duplicate_permit(self):
+        """«ثبت مشابه»: بازکردن فرم ثبت جدید با اطلاعات مجوز انتخابی به‌عنوان الگو"""
+        row = self.table.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "خطا", "برای ثبت مشابه، یک مجوز را انتخاب کنید")
+            return
+        permit_id = int(self.table.item(row, 7).text())
+        # سیگنال جداگانه — MainWindow فرم را در حالت ثبت جدید با الگو پر می‌کند
+        self.duplicate_permit_requested.emit(permit_id)
 
     def _view_scan(self):
         row = self.table.currentRow()
