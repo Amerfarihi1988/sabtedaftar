@@ -1,31 +1,30 @@
 @echo off
-chcp 65001 >nul
 echo ============================================
-echo   ساخت فایل نصبی - نرم‌افزار دفتر خروج کالا
+echo   Build Installer - DafterKhorojKala
 echo ============================================
 echo.
 
-REM ساخت از فایل spec (منبع واحد تنظیمات: datas, hiddenimports, icon)
-REM spec از نوع onefile است — خروجی یک فایل EXE مستقل است
+REM Build from spec file (single source of truth: datas, hiddenimports, icon)
+REM Spec is onefile type - output is a single standalone EXE
 pyinstaller --noconfirm --clean DafterKhorojKala.spec
 
 echo.
 if not exist "dist\DafterKhorojKala.exe" (
-    echo خطا در ساخت! پیام‌های بالا را بررسی کنید.
+    echo BUILD FAILED! Check messages above.
     pause
     exit /b 1
 )
 
 echo ============================================
-echo   EXE ساخته شد: dist\DafterKhorojKala.exe
-echo   این یک فایل واحد مستقل است — کافیست همان یک فایل را
-echo   روی سیستم مقصد کپی و اجرا کنید.
+echo   EXE built: dist\DafterKhorojKala.exe
+echo   This is a single standalone file - just copy
+echo   this one file to the target system and run it.
 echo.
-echo   نکته: در اولین اجرا، ویندوز چند ثانیه مکث دارد
-echo   ^(باز کردن بسته داخلی^) — طبیعی است.
+echo   Note: on first run Windows pauses a few seconds
+echo   ^(extracting internal bundle^) - this is normal.
 echo ============================================
 
-REM ─── ساخت نصاب Inno Setup (اختیاری — اگر ISCC نصب باشد) ───
+REM --- Optional Inno Setup installer (only if ISCC is installed) ---
 set "ISCC="
 if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
 if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles%\Inno Setup 6\ISCC.exe"
@@ -33,21 +32,21 @@ if exist "%ProgramFiles(x86)%\Inno Setup 5\ISCC.exe" set "ISCC=%ProgramFiles(x86
 
 if defined ISCC (
     echo.
-    echo ساخت نصاب با Inno Setup...
+    echo Building installer with Inno Setup...
     "%ISCC%" installer\sabtedaftar.iss
     if exist "installer\Output\SetupDafterKhorojKala.exe" (
         echo ============================================
-        echo   نصاب ساخته شد: installer\Output\SetupDafterKhorojKala.exe
-        echo   برای نصب روی سیستم مقصد، همین فایل نصاب را اجرا کنید.
+        echo   Installer built: installer\Output\SetupDafterKhorojKala.exe
+        echo   Run this installer file on the target system.
         echo ============================================
     ) else (
-        echo نصاب ساخته نشد — پیام‌های Inno Setup را بررسی کنید.
+        echo Installer NOT built - check Inno Setup messages above.
     )
 ) else (
     echo.
-    echo [اختیاری] Inno Setup 6 یافت نشد — نصاب ساخته نشد.
-    echo برای ساخت نصاب: https://jrsoftware.org/isdl.php را نصب کنید
-    echo و دوباره build.bat را اجرا کنید.
+    echo [optional] Inno Setup 6 not found - installer not built.
+    echo To build the installer, download and install: https://jrsoftware.org/isdl.php
+    echo then run build.bat again.
 )
 
 echo.
