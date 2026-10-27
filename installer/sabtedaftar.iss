@@ -31,7 +31,8 @@ DirExistsWarning=no
 ShowLanguageDialog=no
 
 [Languages]
-Name: "farsi"; MessagesFile: "compiler:Languages\Default.isl"
+; Default.isl در پوشه‌ی اصلی کامپایلر است، نه زیرمجموعه‌ی Languages
+Name: "farsi"; MessagesFile: "compiler:Default.isl"
 
 [CustomMessages]
 farsi.CreateDesktopIcon=ایجاد میان‌بر روی دسکتاپ
