@@ -15,7 +15,8 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QGroupBox, QFormLayout, QMessageBox, QTabWidget, QFileDialog
+    QGroupBox, QFormLayout, QMessageBox, QTabWidget, QFileDialog,
+    QComboBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter
@@ -31,6 +32,7 @@ except ImportError:
     CHARTS_AVAILABLE = False
 
 from database.db_manager import db
+from services.unit_factors import unit_info, unit_family_names, DISPLAY_UNIT
 from ui.shamsi_calendar import ShamsiDateEdit, is_valid_shamsi_date
 
 # پالت رنگی هماهنگ با برنامه
@@ -41,6 +43,20 @@ PALETTE = [
 
 FA_MONTHS = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
              "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"]
+
+# گزینه‌های فیلتر واحد — جمع مقادیر ناهم‌واحد (تن + کیلوگرم + عدد) معنی فیزیکی ندارد
+UNIT_FILTER_OPTIONS = [
+    ("همه واحدها (بدون تبدیل)", "all"),
+    ("وزن — کیلوگرم", "weight"),
+    ("حجم — لیتر", "volume"),
+    ("طول — متر", "length"),
+    ("شمارشی — عدد", "count"),
+]
+
+
+def _unit_title_suffix(unit_key):
+    """پسوند عنوان نمودار بر اساس فیلتر واحد — « — کیلوگرم» یا رشته خالی"""
+    return f" — {DISPLAY_UNIT[unit_key]}" if unit_key in DISPLAY_UNIT else ""
 
 
 def _month_label(key):
@@ -102,7 +118,7 @@ class ChartsWindow(QWidget):
         layout.addLayout(btn_row)
 
     def _shared_filter_group(self):
-        """فیلتر مشترک بازه تاریخ — یک‌بار ساخته می‌شود و در هر سه تب فیلترها را می‌بیند"""
+        """فیلتر مشترک بازه تاریخ + واحد — یک‌بار ساخته می‌شود و در هر سه تب فیلترها را می‌بیند"""
         if self._filter_group is None:
             group = QGroupBox("بازه زمانی (شمسی) — خالی = کل تاریخچه")
             form = QFormLayout(group)
@@ -111,6 +127,19 @@ class ChartsWindow(QWidget):
             self.f_date_to = ShamsiDateEdit()
             form.addRow("از:", self.f_date_from)
             form.addRow("تا:", self.f_date_to)
+
+            # فیلتر خانواده واحد: ۵ تن + ۳ کیلوگرم + ۲ عدد جمع‌شدنی نیست؛
+            # برای تحلیل درست باید خانواده انتخاب شود تا مقادیر به واحد پایه تبدیل شوند
+            self.f_unit = QComboBox()
+            for label, key in UNIT_FILTER_OPTIONS:
+                self.f_unit.addItem(label, key)
+            self.f_unit.setCurrentIndex(0)
+            self.f_unit.setToolTip(
+                "جمع مقادیر ناهم‌واحد معنی فیزیکی ندارد.\n"
+                "با انتخاب خانواده، مقادیر به واحد پایه تبدیل و فقط هم‌نوع‌ها جمع می‌شوند."
+            )
+            form.addRow("واحد:", self.f_unit)
+
             self._filter_group = group
         return self._filter_group
 
@@ -159,6 +188,20 @@ class ChartsWindow(QWidget):
         layout.addWidget(self.bar_view, stretch=1)
         return tab
 
+    def _unit_where(self):
+        """
+        شرط فیلتر خانواده واحد + پارامترها؛ «همه واحدها» = بدون شرط.
+        خروجی (sql_fragment_or_empty, params).
+        """
+        unit_key = self.f_unit.currentData() if hasattr(self, "f_unit") else "all"
+        if unit_key == "all" or unit_key is None:
+            return "", []
+        names = unit_family_names(unit_key)
+        if not names:
+            return "", []
+        placeholders = ", ".join("?" for _ in names)
+        return f" AND u.name IN ({placeholders})", list(names)
+
     def _render_bar(self):
         dates = self._validate_dates()
         if dates is None:
@@ -166,30 +209,44 @@ class ChartsWindow(QWidget):
         date_from, date_to = dates
 
         try:
-            conditions, params = [], []
+            unit_where, unit_params = self._unit_where()
+            conditions, params = ["1=1"], list(unit_params)
+            if unit_where:
+                conditions.append(unit_where.replace(" AND ", "", 1))
             if date_from:
                 conditions.append("ep.exit_date >= ?")
                 params.append(date_from)
             if date_to:
                 conditions.append("ep.exit_date <= ?")
                 params.append(date_to)
-            where = " WHERE " + " AND ".join(conditions) if conditions else ""
+            where = " WHERE " + " AND ".join(conditions)
 
             rows = db.fetch_all(
-                f"""SELECT ep.exit_date, SUM(ei.amount) as total
+                f"""SELECT ep.exit_date, ei.amount as amount, u.name as unit_name
                     FROM exit_items ei
                     JOIN exit_permits ep ON ei.exit_permit_id = ep.id
+                    JOIN units u ON ei.unit_id = u.id
                     {where}
-                    GROUP BY ep.exit_date
                     ORDER BY ep.exit_date""",
                 tuple(params)
             )
 
-            # گروه‌بندی ماهانه با مرتب‌سازی درست (پایتون؛ نه ترتیب رشته‌ای SQL)
+            # تبدیل به واحد پایه‌ی خانواده + گروه‌بندی ماهانه
+            # (جمع مقادیر ناهم‌واحد معنی فیزیکی ندارد)
+            unit_key = self.f_unit.currentData() if hasattr(self, "f_unit") else "all"
             monthly = {}
+            skipped = 0
             for r in rows:
+                amount = r["amount"] or 0
+                if unit_key != "all":
+                    family, factor = unit_info(r["unit_name"])
+                    if family != unit_key:
+                        skipped += 1
+                        continue
+                    # خانواده شمارشی فکتور ندارد — مقدار خام حفظ می‌شود
+                    amount = amount * factor if factor else amount
                 key = str(r["exit_date"])[:7]
-                monthly[key] = monthly.get(key, 0.0) + (r["total"] or 0)
+                monthly[key] = monthly.get(key, 0.0) + amount
 
             if not monthly:
                 self.bar_view.setChart(self._empty_chart("داده‌ای در این بازه ثبت نشده"))
@@ -197,6 +254,10 @@ class ChartsWindow(QWidget):
 
             months = sorted(monthly.keys(), key=_month_sort_key)
             categories = [_month_label(m) for m in months]
+
+            title_suffix = _unit_title_suffix(unit_key)
+            if skipped:
+                title_suffix += f"  ({skipped} ردیف با واحد خارج از این خانواده لحاظ نشد)"
 
             bar_set = QBarSet("مجموع خروج")
             bar_set.setColor(QColor(PALETTE[0]))
@@ -209,7 +270,7 @@ class ChartsWindow(QWidget):
 
             chart = QChart()
             chart.addSeries(series)
-            chart.setTitle("خروج ماهانه کالا")
+            chart.setTitle("خروج ماهانه کالا" + title_suffix)
             chart.legend().hide()
             chart.setAnimationOptions(QChart.AnimationOption.SeriesAnimations)
 
@@ -262,23 +323,25 @@ class ChartsWindow(QWidget):
         date_from, date_to = dates
 
         try:
-            conditions, params = [], []
+            unit_where, unit_params = self._unit_where()
+            conditions, params = ["1=1"], list(unit_params)
+            if unit_where:
+                conditions.append(unit_where.replace(" AND ", "", 1))
             if date_from:
                 conditions.append("ep.exit_date >= ?")
                 params.append(date_from)
             if date_to:
                 conditions.append("ep.exit_date <= ?")
                 params.append(date_to)
-            where = " WHERE " + " AND ".join(conditions) if conditions else ""
+            where = " WHERE " + " AND ".join(conditions)
 
             rows = db.fetch_all(
-                f"""SELECT c.name as company_name, SUM(ei.amount) as total
+                f"""SELECT c.name as company_name, ei.amount as amount, u.name as unit_name
                     FROM exit_items ei
                     JOIN exit_permits ep ON ei.exit_permit_id = ep.id
                     JOIN companies c ON ep.company_id = c.id
-                    {where}
-                    GROUP BY c.id
-                    ORDER BY total DESC""",
+                    JOIN units u ON ei.unit_id = u.id
+                    {where}""",
                 tuple(params)
             )
 
@@ -286,18 +349,65 @@ class ChartsWindow(QWidget):
                 self.pie_view.setChart(self._empty_chart("داده‌ای در این بازه ثبت نشده"))
                 return
 
+            # جمع به‌ازای شرکت پس از تبدیل به واحد پایه‌ی خانواده
+            # (جمع مقادیر ناهم‌واحد معنی فیزیکی ندارد)
+            unit_key = self.f_unit.currentData() if hasattr(self, "f_unit") else "all"
+            per_company, skipped = {}, 0
+            for r in rows:
+                amount = r["amount"] or 0
+                if unit_key != "all":
+                    family, factor = unit_info(r["unit_name"])
+                    if family != unit_key:
+                        skipped += 1
+                        continue
+                    # خانواده شمارشی فکتور ندارد — مقدار خام حفظ می‌شود
+                    amount = amount * factor if factor else amount
+                name = str(r["company_name"])
+                per_company[name] = per_company.get(name, 0.0) + amount
+
+            if not per_company:
+                self.pie_view.setChart(self._empty_chart("داده‌ای در این بازه ثبت نشده"))
+                return
+
+            # مرتب‌سازی نزولی بر اساس سهم
+            sorted_companies = sorted(per_company.items(), key=lambda kv: kv[1], reverse=True)
+            names = [n for n, _ in sorted_companies]
+            totals = [t for _, t in sorted_companies]
+
+            # درصد هر شرکت باید از «مجموع واقعی کل» محاسبه شود؛
+            # slice_.percentage() در لحظه‌ی append هنوز همه‌ی برش‌ها را ندارد
+            # و برای برش اول ۱۰۰٪ و برای بعدی‌ها عدد غلط برمی‌گرداند.
+            grand_total = sum(totals)
+            if grand_total <= 0:
+                self.pie_view.setChart(self._empty_chart("داده‌ای در این بازه ثبت نشده"))
+                return
+
+            # گرد کردن به روش «بزرگ‌ترین باقیمانده»: جمع برچسب‌های درصد همیشه
+            # دقیقاً ۱۰۰٪ می‌شود (گرد کردن معمولی می‌تواند جمع را ۹۹ یا ۱۰۱ نشان دهد)
+            raw_pcts = [t / grand_total * 100.0 for t in totals]
+            label_pcts = [int(p) for p in raw_pcts]  # کف هر درصد
+            remainder = 100 - sum(label_pcts)
+            by_fraction = sorted(range(len(names)),
+                                 key=lambda i: raw_pcts[i] - label_pcts[i],
+                                 reverse=True)
+            for i in by_fraction[:remainder]:
+                label_pcts[i] += 1
+
             series = QPieSeries()
-            for i, r in enumerate(rows):
-                slice_ = series.append(str(r["company_name"]), float(r["total"] or 0))
+            for i, name in enumerate(names):
+                slice_ = series.append(name, totals[i])
                 slice_.setBrush(QColor(PALETTE[i % len(PALETTE)]))
                 slice_.setLabelVisible(True)
-                pct = slice_.percentage() * 100
-                slice_.setLabel(f"{r['company_name']} — {pct:.0f}%")
+                slice_.setLabel(f"{name} — {label_pcts[i]}%")
                 slice_.setLabelColor(QColor("#1F2937"))
+
+            title_suffix = _unit_title_suffix(unit_key)
+            if skipped:
+                title_suffix += f"  ({skipped} ردیف با واحد خارج از این خانواده لحاظ نشد)"
 
             chart = QChart()
             chart.addSeries(series)
-            chart.setTitle("سهم شرکت‌ها از کل خروج")
+            chart.setTitle("سهم شرکت‌ها از کل خروج" + title_suffix)
             chart.legend().hide()
 
             self.pie_view.setChart(chart)
@@ -339,8 +449,11 @@ class ChartsWindow(QWidget):
         date_from, date_to = dates
 
         try:
+            unit_where, unit_params = self._unit_where()
             conditions = ["ei.is_debt = 1"]
-            params = []
+            if unit_where:
+                conditions.append(unit_where.replace(" AND ", "", 1))
+            params = list(unit_params)
             if date_from:
                 conditions.append("ep.exit_date >= ?")
                 params.append(date_from)
@@ -350,19 +463,29 @@ class ChartsWindow(QWidget):
             where = " WHERE " + " AND ".join(conditions)
 
             rows = db.fetch_all(
-                f"""SELECT ep.exit_date, SUM(ei.amount) as total
+                f"""SELECT ep.exit_date, ei.amount as amount, u.name as unit_name
                     FROM exit_items ei
                     JOIN exit_permits ep ON ei.exit_permit_id = ep.id
-                    {where}
-                    GROUP BY ep.exit_date
-                    ORDER BY ep.exit_date""",
+                    JOIN units u ON ei.unit_id = u.id
+                    {where}""",
                 tuple(params)
             )
 
+            # تبدیل به واحد پایه + گروه‌بندی ماهانه
+            unit_key = self.f_unit.currentData() if hasattr(self, "f_unit") else "all"
             monthly = {}
+            skipped = 0
             for r in rows:
+                amount = r["amount"] or 0
+                if unit_key != "all":
+                    family, factor = unit_info(r["unit_name"])
+                    if family != unit_key:
+                        skipped += 1
+                        continue
+                    # خانواده شمارشی فکتور ندارد — مقدار خام حفظ می‌شود
+                    amount = amount * factor if factor else amount
                 key = str(r["exit_date"])[:7]
-                monthly[key] = monthly.get(key, 0.0) + (r["total"] or 0)
+                monthly[key] = monthly.get(key, 0.0) + amount
 
             if not monthly:
                 self.line_view.setChart(
@@ -383,9 +506,13 @@ class ChartsWindow(QWidget):
                 series.append(i, monthly[m])
             series.setPointsVisible(True)
 
+            title_suffix = _unit_title_suffix(unit_key)
+            if skipped:
+                title_suffix += f"  ({skipped} ردیف با واحد خارج از این خانواده لحاظ نشد)"
+
             chart = QChart()
             chart.addSeries(series)
-            chart.setTitle("روند شکل‌گیری بدهی‌ها (ماهانه)")
+            chart.setTitle("روند شکل‌گیری بدهی‌ها (ماهانه)" + title_suffix)
             chart.legend().hide()
 
             axis_x = QBarCategoryAxis()
