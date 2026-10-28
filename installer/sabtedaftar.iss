@@ -16,7 +16,7 @@ AppId={{8A7C4E3F-2B1D-4E6A-9F0C-5D8E1A2B3C4D}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
-DefaultDirName={autopf}\DafterKhorojKala
+DefaultDirName={userpf}\DafterKhorojKala
 DefaultGroupName={#MyAppName}
 UninstallDisplayIcon={app}\{#MyAppExeName}
 OutputBaseFilename=SetupDafterKhorojKala
@@ -24,9 +24,10 @@ OutputDir=Output
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-; برنامه داده‌هایش را در پوشه‌ی خودش (data\backups) نگه می‌دارد
-; و به Admin فقط برای نوشتن در Program Files نیاز دارد
-PrivilegesRequired=admin
+; برنامه داده‌هایش را کنار EXE داخل پوشه‌ی خودش می‌سازد (data\ , backups\)؛
+; پس باید در پوشه‌ی قابل‌نوشتن سطح کاربر نصب شود — نصب در Program Files
+; هنگام ساخت data\ به «Access is denied» می‌رسد.
+PrivilegesRequired=lowest
 DirExistsWarning=no
 ShowLanguageDialog=no
 
